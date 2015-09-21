@@ -1,0 +1,18 @@
+{
+  "name": "ddp",
+  "version": "1.2.0",
+  "description": "Meteor's latency-compensated distributed data client",
+  "dependencies": {
+    "diff-sequence": "aleclarson/diff-sequence#1.0.0",
+    "ejson": "aleclarson/ejson#1.0.7",
+    "id-map": "aleclarson/id-map#1.0.4",
+    "json": "aleclarson/json#1.0.4",
+    "meteor-client": "aleclarson/meteor-client#1.1.7",
+    "mongo-id": "aleclarson/mongo-id#1.0.0",
+    "random": "aleclarson/random#1.0.4",
+    "reload": "aleclarson/reload#1.1.4",
+    "retry": "aleclarson/retry#1.0.4",
+    "tracker": "aleclarson/tracker#1.0.8",
+    "underscore": "aleclarson/underscore#1.5.2"
+  }
+}

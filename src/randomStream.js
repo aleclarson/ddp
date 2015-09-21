@@ -1,3 +1,17 @@
+
+var Random = require('random');
+var _ = require('underscore');
+
+var DDP = require('./ddp');
+
+// Returns the named sequence of pseudo-random values.
+// The scope will be DDP._CurrentInvocation.get(), so the stream will produce
+// consistent values for method calls on the client and server.
+DDP.randomStream = function (name) {
+  var scope = DDP._CurrentInvocation.get();
+  return RandomStream.get(scope, name);
+};
+
 // RandomStream allows for generation of pseudo-random values, from a seed.
 //
 // We use this for consistent 'random' numbers across the client and server.
@@ -21,20 +35,12 @@
 //                          If an array, will be used as-is
 //                          If a value, will be converted to a single-value array
 //                          If omitted, a random array will be used as the seed.
-DDPCommon.RandomStream = function (options) {
+var RandomStream = function (options) {
   var self = this;
 
   this.seed = [].concat(options.seed || randomToken());
 
   this.sequences = {};
-};
-
-// Returns a random string of sufficient length for a random seed.
-// This is a placeholder function; a similar function is planned
-// for Random itself; when that is added we should remove this function,
-// and call Random's randomToken instead.
-function randomToken() {
-  return Random.hexString(20);
 };
 
 // Returns the random stream with the specified name, in the specified scope.
@@ -44,7 +50,7 @@ function randomToken() {
 // However, scope will normally be the current DDP method invocation, so
 // we'll use the stream with the specified name, and we should get consistent
 // values on the client and server sides of a method call.
-DDPCommon.RandomStream.get = function (scope, name) {
+RandomStream.get = function (scope, name) {
   if (!name) {
     name = "default";
   }
@@ -55,7 +61,7 @@ DDPCommon.RandomStream.get = function (scope, name) {
   }
   var randomStream = scope.randomStream;
   if (!randomStream) {
-    scope.randomStream = randomStream = new DDPCommon.RandomStream({
+    scope.randomStream = randomStream = new RandomStream({
       seed: scope.randomSeed
     });
   }
@@ -69,12 +75,20 @@ DDPCommon.RandomStream.get = function (scope, name) {
 // However, we often evaluate makeRpcSeed lazily, and thus the relevant
 // invocation may not be the one currently in scope.
 // If enclosing is null, we'll use Random and values won't be repeatable.
-DDPCommon.makeRpcSeed = function (enclosing, methodName) {
-  var stream = DDPCommon.RandomStream.get(enclosing, '/rpc/' + methodName);
+var makeRpcSeed = function (enclosing, methodName) {
+  var stream = RandomStream.get(enclosing, '/rpc/' + methodName);
   return stream.hexString(20);
 };
 
-_.extend(DDPCommon.RandomStream.prototype, {
+// Returns a random string of sufficient length for a random seed.
+// This is a placeholder function; a similar function is planned
+// for Random itself; when that is added we should remove this function,
+// and call Random's randomToken instead.
+var randomToken = function () {
+  return Random.hexString(20);
+};
+
+_.extend(RandomStream.prototype, {
   // Get a random sequence with the specified name, creating it if does not exist.
   // New sequences are seeded with the seed concatenated with the name.
   // By passing a seed into Random.create, we use the Alea generator.

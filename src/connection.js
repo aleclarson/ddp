@@ -1,8 +1,51 @@
-if (Meteor.isServer) {
-  var path = Npm.require('path');
-  var Fiber = Npm.require('fibers');
-  var Future = Npm.require(path.join('fibers', 'future'));
-}
+
+var DiffSequence = require('diff-sequence');
+var MongoID = require('mongo-id');
+var Tracker = require('tracker');
+var Meteor = require('meteor-client');
+var Random = require('random');
+var Reload = require('reload');
+var EJSON = require('ejson');
+var JSON = require('json');
+var _ = require('underscore');
+
+var MethodInvocation = require('./methodInvocation');
+var MethodInvoker = require('./methodInvoker');
+var ClientStream = require('./clientStream');
+var MongoIDMap = require('./idMap');
+var Heartbeat = require('./heartbeat');
+var DDP = require('./ddp');
+
+// @param url {String} URL to Meteor app,
+//     e.g.:
+//     "localhost:3000"
+//     "subdomain.meteor.com"
+//     "http://subdomain.meteor.com"
+//     "/"
+//     "ddp+sockjs://ddp--****-foo.meteor.com/sockjs"
+
+/**
+ * @summary Connect to the server of a different Meteor application to subscribe to its document sets and invoke its remote methods.
+ * @locus Anywhere
+ * @param {String} url The URL of another Meteor application.
+ */
+DDP.connect = function (url, options) {
+  var ret = new Connection(url, options);
+  allConnections.push(ret); // hack. see below.
+  return ret;
+};
+
+// Hack for `spiderable` package: a way to see if the page is done
+// loading all the data it needs.
+//
+var allConnections = [];
+DDP._allSubscriptionsReady = function () {
+  return _.all(allConnections, function (conn) {
+    return _.all(conn._subscriptions, function (sub) {
+      return sub.ready;
+    });
+  });
+};
 
 // @param url {String|Object} URL to Meteor app,
 //   or an object as a test hook (see code)
@@ -10,7 +53,6 @@ if (Meteor.isServer) {
 //   reloadWithOutstanding: is it OK to reload if there are outstanding methods?
 //   headers: extra headers to send on the websockets connection, for
 //     server-to-server DDP only
-//   _sockjsOptions: Specifies options to pass through to the sockjs client
 //   onDDPNegotiationVersionFailure: callback when version negotiation fails.
 //
 // XXX There should be a way to destroy a DDP connection, causing all
@@ -35,7 +77,7 @@ var Connection = function (url, options) {
     heartbeatTimeout: 15000,
     // These options are only for testing.
     reloadWithOutstanding: false,
-    supportedDDPVersions: DDPCommon.SUPPORTED_DDP_VERSIONS,
+    supportedDDPVersions: DDP.SUPPORTED_DDP_VERSIONS,
     retry: true,
     respondToPings: true
   }, options);
@@ -49,10 +91,9 @@ var Connection = function (url, options) {
   if (typeof url === "object") {
     self._stream = url;
   } else {
-    self._stream = new LivedataTest.ClientStream(url, {
+    self._stream = new ClientStream(url, {
       retry: options.retry,
       headers: options.headers,
-      _sockjsOptions: options._sockjsOptions,
       // Used to keep some tests quiet, or for other cases in which
       // the right thing to do with connection errors is to silently
       // fail (e.g. sending package usage stats). At some point we
@@ -190,8 +231,8 @@ var Connection = function (url, options) {
   self._userIdDeps = new Tracker.Dependency;
 
   // Block auto-reload while we're waiting for method responses.
-  if (Meteor.isClient && Package.reload && !options.reloadWithOutstanding) {
-    Package.reload.Reload._onMigrate(function (retry) {
+  if (!options.reloadWithOutstanding) {
+    Reload._onMigrate(function (retry) {
       if (!self._readyToMigrate()) {
         if (self._retryMigrate)
           throw new Error("Two migrations in progress?");
@@ -205,7 +246,7 @@ var Connection = function (url, options) {
 
   var onMessage = function (raw_msg) {
     try {
-      var msg = DDPCommon.parseDDP(raw_msg);
+      var msg = DDP.parse(raw_msg);
     } catch (e) {
       Meteor._debug("Exception while parsing DDP", e);
       return;
@@ -322,109 +363,10 @@ var Connection = function (url, options) {
     }
   };
 
-  if (Meteor.isServer) {
-    self._stream.on('message', Meteor.bindEnvironment(onMessage, Meteor._debug));
-    self._stream.on('reset', Meteor.bindEnvironment(onReset, Meteor._debug));
-    self._stream.on('disconnect', Meteor.bindEnvironment(onDisconnect, Meteor._debug));
-  } else {
-    self._stream.on('message', onMessage);
-    self._stream.on('reset', onReset);
-    self._stream.on('disconnect', onDisconnect);
-  }
+  self._stream.on('message', onMessage);
+  self._stream.on('reset', onReset);
+  self._stream.on('disconnect', onDisconnect);
 };
-
-// A MethodInvoker manages sending a method to the server and calling the user's
-// callbacks. On construction, it registers itself in the connection's
-// _methodInvokers map; it removes itself once the method is fully finished and
-// the callback is invoked. This occurs when it has both received a result,
-// and the data written by it is fully visible.
-var MethodInvoker = function (options) {
-  var self = this;
-
-  // Public (within this file) fields.
-  self.methodId = options.methodId;
-  self.sentMessage = false;
-
-  self._callback = options.callback;
-  self._connection = options.connection;
-  self._message = options.message;
-  self._onResultReceived = options.onResultReceived || function () {};
-  self._wait = options.wait;
-  self._methodResult = null;
-  self._dataVisible = false;
-
-  // Register with the connection.
-  self._connection._methodInvokers[self.methodId] = self;
-};
-_.extend(MethodInvoker.prototype, {
-  // Sends the method message to the server. May be called additional times if
-  // we lose the connection and reconnect before receiving a result.
-  sendMessage: function () {
-    var self = this;
-    // This function is called before sending a method (including resending on
-    // reconnect). We should only (re)send methods where we don't already have a
-    // result!
-    if (self.gotResult())
-      throw new Error("sendingMethod is called on method with result");
-
-    // If we're re-sending it, it doesn't matter if data was written the first
-    // time.
-    self._dataVisible = false;
-
-    self.sentMessage = true;
-
-    // If this is a wait method, make all data messages be buffered until it is
-    // done.
-    if (self._wait)
-      self._connection._methodsBlockingQuiescence[self.methodId] = true;
-
-    // Actually send the message.
-    self._connection._send(self._message);
-  },
-  // Invoke the callback, if we have both a result and know that all data has
-  // been written to the local cache.
-  _maybeInvokeCallback: function () {
-    var self = this;
-    if (self._methodResult && self._dataVisible) {
-      // Call the callback. (This won't throw: the callback was wrapped with
-      // bindEnvironment.)
-      self._callback(self._methodResult[0], self._methodResult[1]);
-
-      // Forget about this method.
-      delete self._connection._methodInvokers[self.methodId];
-
-      // Let the connection know that this method is finished, so it can try to
-      // move on to the next block of methods.
-      self._connection._outstandingMethodFinished();
-    }
-  },
-  // Call with the result of the method from the server. Only may be called
-  // once; once it is called, you should not call sendMessage again.
-  // If the user provided an onResultReceived callback, call it immediately.
-  // Then invoke the main callback if data is also visible.
-  receiveResult: function (err, result) {
-    var self = this;
-    if (self.gotResult())
-      throw new Error("Methods should only receive results once");
-    self._methodResult = [err, result];
-    self._onResultReceived(err, result);
-    self._maybeInvokeCallback();
-  },
-  // Call this when all data written by the method is visible. This means that
-  // the method has returns its "data is done" message *AND* all server
-  // documents that are buffered at that time have been written to the local
-  // cache. Invokes the main callback if the result has been received.
-  dataVisible: function () {
-    var self = this;
-    self._dataVisible = true;
-    self._maybeInvokeCallback();
-  },
-  // True if receiveResult has been called.
-  gotResult: function () {
-    var self = this;
-    return !!self._methodResult;
-  }
-});
 
 _.extend(Connection.prototype, {
   // 'name' is the name of the data on the wire that should go in the
@@ -754,7 +696,7 @@ _.extend(Connection.prototype, {
     var randomSeed = null;
     var randomSeedGenerator = function () {
       if (randomSeed === null) {
-        randomSeed = DDPCommon.makeRpcSeed(enclosing, name);
+        randomSeed = DDP.makeRpcSeed(enclosing, name);
       }
       return randomSeed;
     };
@@ -777,7 +719,7 @@ _.extend(Connection.prototype, {
         self.setUserId(userId);
       };
 
-      var invocation = new DDPCommon.MethodInvocation({
+      var invocation = new MethodInvocation({
         isSimulation: true,
         userId: self.userId(),
         setUserId: setUserId,
@@ -791,16 +733,7 @@ _.extend(Connection.prototype, {
         // Note that unlike in the corresponding server code, we never audit
         // that stubs check() their arguments.
         var stubReturnValue = DDP._CurrentInvocation.withValue(invocation, function () {
-          if (Meteor.isServer) {
-            // Because saveOriginals and retrieveOriginals aren't reentrant,
-            // don't allow stubs to yield.
-            return Meteor._noYieldsAllowed(function () {
-              // re-clone, so that the stub can't affect our caller's values
-              return stub.apply(invocation, EJSON.clone(args));
-            });
-          } else {
-            return stub.apply(invocation, EJSON.clone(args));
-          }
+          return stub.apply(invocation, EJSON.clone(args));
         });
       }
       catch (e) {
@@ -846,21 +779,14 @@ _.extend(Connection.prototype, {
 
     // If the caller didn't give a callback, decide what to do.
     if (!callback) {
-      if (Meteor.isClient) {
-        // On the client, we don't have fibers, so we can't block. The
-        // only thing we can do is to return undefined and discard the
-        // result of the RPC. If an error occurred then print the error
-        // to the console.
-        callback = function (err) {
-          err && Meteor._debug("Error invoking Method '" + name + "':",
-                               err.message);
-        };
-      } else {
-        // On the server, make the function synchronous. Throw on
-        // errors, return on success.
-        var future = new Future;
-        callback = future.resolver();
-      }
+      // On the client, we don't have fibers, so we can't block. The
+      // only thing we can do is to return undefined and discard the
+      // result of the RPC. If an error occurred then print the error
+      // to the console.
+      callback = function (err) {
+        err && Meteor._debug("Error invoking Method '" + name + "':",
+                             err.message);
+      };
     }
     // Send the RPC. Note that on the client, it is important that the
     // stub have finished before we send the RPC, so that we know we have
@@ -977,7 +903,7 @@ _.extend(Connection.prototype, {
   // Sends the DDP stringification of the given message object
   _send: function (obj) {
     var self = this;
-    self._stream.send(DDPCommon.stringifyDDP(obj));
+    self._stream.send(DDP.stringify(obj));
   },
 
   // We detected via DDP-level heartbeats that we've lost the
@@ -1065,7 +991,7 @@ _.extend(Connection.prototype, {
     var self = this;
 
     if (self._version !== 'pre1' && self._heartbeatInterval !== 0) {
-      self._heartbeat = new DDPCommon.Heartbeat({
+      self._heartbeat = new Heartbeat({
         heartbeatInterval: self._heartbeatInterval,
         heartbeatTimeout: self._heartbeatTimeout,
         onTimeout: function () {
@@ -1609,35 +1535,3 @@ _.extend(Connection.prototype, {
     }
   }
 });
-
-LivedataTest.Connection = Connection;
-
-// @param url {String} URL to Meteor app,
-//     e.g.:
-//     "subdomain.meteor.com",
-//     "http://subdomain.meteor.com",
-//     "/",
-//     "ddp+sockjs://ddp--****-foo.meteor.com/sockjs"
-
-/**
- * @summary Connect to the server of a different Meteor application to subscribe to its document sets and invoke its remote methods.
- * @locus Anywhere
- * @param {String} url The URL of another Meteor application.
- */
-DDP.connect = function (url, options) {
-  var ret = new Connection(url, options);
-  allConnections.push(ret); // hack. see below.
-  return ret;
-};
-
-// Hack for `spiderable` package: a way to see if the page is done
-// loading all the data it needs.
-//
-allConnections = [];
-DDP._allSubscriptionsReady = function () {
-  return _.all(allConnections, function (conn) {
-    return _.all(conn._subscriptions, function (sub) {
-      return sub.ready;
-    });
-  });
-};

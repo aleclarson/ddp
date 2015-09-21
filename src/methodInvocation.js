@@ -1,3 +1,8 @@
+
+var _ = require('underscore');
+
+var DDP = require('./ddp');
+
 // Instance name is this because it is usually referred to as this inside a
 // method definition
 /**
@@ -6,7 +11,7 @@
  * @param {Object} options
  * @instanceName this
  */
-DDPCommon.MethodInvocation = function (options) {
+var MethodInvocation = function (options) {
   var self = this;
 
   // true if we're running not the actual method, but a stub (that is,
@@ -21,7 +26,7 @@ DDPCommon.MethodInvocation = function (options) {
    * @summary Access inside a method invocation.  Boolean value, true if this invocation is a stub.
    * @locus Anywhere
    * @name  isSimulation
-   * @memberOf DDPCommon.MethodInvocation
+   * @memberOf MethodInvocation
    * @instance
    * @type {Boolean}
    */
@@ -39,7 +44,7 @@ DDPCommon.MethodInvocation = function (options) {
    * @summary The id of the user that made this method call, or `null` if no user was logged in.
    * @locus Anywhere
    * @name  userId
-   * @memberOf DDPCommon.MethodInvocation
+   * @memberOf MethodInvocation
    * @instance
    */
   this.userId = options.userId;
@@ -54,7 +59,7 @@ DDPCommon.MethodInvocation = function (options) {
    * @summary Access inside a method invocation. The [connection](#meteor_onconnection) that this method was received on. `null` if the method is not associated with a connection, eg. a server initiated method call.
    * @locus Server
    * @name  connection
-   * @memberOf DDPCommon.MethodInvocation
+   * @memberOf MethodInvocation
    * @instance
    */
   this.connection = options.connection;
@@ -66,11 +71,11 @@ DDPCommon.MethodInvocation = function (options) {
   this.randomStream = null;
 };
 
-_.extend(DDPCommon.MethodInvocation.prototype, {
+_.extend(MethodInvocation.prototype, {
   /**
    * @summary Call inside a method invocation.  Allow subsequent method from this client to begin running in a new fiber.
    * @locus Server
-   * @memberOf DDPCommon.MethodInvocation
+   * @memberOf MethodInvocation
    * @instance
    */
   unblock: function () {
@@ -82,7 +87,7 @@ _.extend(DDPCommon.MethodInvocation.prototype, {
   /**
    * @summary Set the logged in user.
    * @locus Server
-   * @memberOf DDPCommon.MethodInvocation
+   * @memberOf MethodInvocation
    * @instance
    * @param {String | null} userId The value that should be returned by `userId` on this connection.
    */
@@ -95,3 +100,4 @@ _.extend(DDPCommon.MethodInvocation.prototype, {
   }
 });
 
+module.exports = MethodInvocation;

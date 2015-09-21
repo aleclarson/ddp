@@ -1,6 +1,14 @@
-DDPCommon.SUPPORTED_DDP_VERSIONS = [ '1', 'pre2', 'pre1' ];
 
-DDPCommon.parseDDP = function (stringMessage) {
+var Meteor = require('meteor-client');
+var EJSON = require('ejson');
+var JSON = require('json');
+var _ = require('underscore');
+
+var DDP = require('./ddp');
+
+DDP.SUPPORTED_DDP_VERSIONS = [ '1', 'pre2', 'pre1' ];
+
+DDP.parse = function (stringMessage) {
   try {
     var msg = JSON.parse(stringMessage);
   } catch (e) {
@@ -34,7 +42,7 @@ DDPCommon.parseDDP = function (stringMessage) {
   return msg;
 };
 
-DDPCommon.stringifyDDP = function (msg) {
+DDP.stringify = function (msg) {
   var copy = EJSON.clone(msg);
   // swizzle 'changed' messages from 'fields undefined' rep to 'fields
   // and cleared' rep
@@ -61,4 +69,3 @@ DDPCommon.stringifyDDP = function (msg) {
   }
   return JSON.stringify(copy);
 };
-

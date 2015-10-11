@@ -94,3 +94,6 @@ _.extend(MethodInvoker.prototype, {
     return !!self._methodResult;
   }
 });
+
+module.exports = MethodInvoker;
+

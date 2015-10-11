@@ -75,7 +75,7 @@ RandomStream.get = function (scope, name) {
 // However, we often evaluate makeRpcSeed lazily, and thus the relevant
 // invocation may not be the one currently in scope.
 // If enclosing is null, we'll use Random and values won't be repeatable.
-var makeRpcSeed = function (enclosing, methodName) {
+DDP.makeRpcSeed = function (enclosing, methodName) {
   var stream = RandomStream.get(enclosing, '/rpc/' + methodName);
   return stream.hexString(20);
 };

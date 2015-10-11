@@ -51,12 +51,6 @@ npm install aleclarson/ddp#1.2.0
 
 &nbsp;
 
-## changelog
+## contributions
 
-- Removed dependency on [sockjs/sockjs-client](https://github.com/sockjs/sockjs-client) since React Native supports `window.WebSocket`
-
-- `DDP.stringifyDDP` renamed to `DDP.stringify`
-
-- `DDP.parseDDP` renamed to `DDP.parse`
-
-- `Meteor.refresh` is no longer defined
+Pull requests are welcome, but should be against the `devel` branch.

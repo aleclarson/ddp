@@ -829,11 +829,6 @@ _.extend(Connection.prototype, {
     if (self._outstandingMethodBlocks.length === 1)
       methodInvoker.sendMessage();
 
-    // If we're using the default callback on the server,
-    // block waiting for the result.
-    if (future) {
-      return future.wait();
-    }
     return options.returnStubValue ? stubReturnValue : undefined;
   },
 
